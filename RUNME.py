@@ -69,30 +69,44 @@ job_json = {
         },
         "tasks": [
             {
-                "job_cluster_key": "sample_solacc_cluster",
+                "job_cluster_key": "llm_recommender",
                 "notebook_task": {
-                    "notebook_path": f"00_[PLEASE READ] Contributing to Solution Accelerators"
+                    "notebook_path": f"00_Intro_and_Config"
                 },
-                "task_key": "sample_solacc_01"
+                "task_key": "00"
             },
-            # {
-            #     "job_cluster_key": "sample_solacc_cluster",
-            #     "notebook_task": {
-            #         "notebook_path": f"02_Analysis"
-            #     },
-            #     "task_key": "sample_solacc_02",
-            #     "depends_on": [
-            #         {
-            #             "task_key": "sample_solacc_01"
-            #         }
-            #     ]
-            # }
+            {
+                 "job_cluster_key": "llm_recommender",
+                 "notebook_task": {
+                     "notebook_path": f"01_Prepare_Data"
+                 },
+                 "task_key": "01",
+                 "depends_on": [
+                     {
+                         "task_key": "00"
+                     }
+                 ]
+             },
+            {
+                 "job_cluster_key": "llm_recommender",
+                 "notebook_task": {
+                     "notebook_path": f"02_Define_Recommender"
+                 },
+                 "task_key": "02",
+                 "depends_on": [
+                     {
+                         "task_key": "01"
+                     }
+                 ]
+             },
         ],
         "job_clusters": [
             {
-                "job_cluster_key": "sample_solacc_cluster",
+                "job_cluster_key": "llm_recommender",
                 "new_cluster": {
-                    "spark_version": "11.3.x-cpu-ml-scala2.12",
+                    "spark_version": "14.0.x-cpu-ml-scala2.12",
+                    "single_user_name": dbutils.notebook.entry_point.getDbutils().notebook().getContext().userName().get(),
+                    "data_security_mode": "SINGLE_USER",
                 "spark_conf": {
                     "spark.databricks.delta.formatCheck.enabled": "false"
                     },
@@ -118,4 +132,3 @@ dbutils.widgets.dropdown("run_job", "False", ["True", "False"])
 run_job = dbutils.widgets.get("run_job") == "True"
 nsc = NotebookSolutionCompanion()
 nsc.deploy_compute(job_json, run_job=run_job)
-_ = nsc.deploy_dbsql("./dashboards/IoT Streaming SA Anomaly Detection.dbdash", dbsql_config_table, spark)
