@@ -1,5 +1,5 @@
 # Databricks notebook source
-# MAGIC %md The purpose of this notebook is to introduce the LLM Recommender solution accelerator and provide configuration settings for the various notebooks that comprise it.  This notebook was developed using a Databricks ML 14.0 cluster. 
+# MAGIC %md The purpose of this notebook is to introduce the LLM Recommender solution accelerator and provide configuration settings for the various notebooks that comprise it.  This notebook was developed using a Databricks ML 14.2 cluster. 
 
 # COMMAND ----------
 
@@ -42,20 +42,18 @@ if 'config' not in locals().keys():
 # DBTITLE 1,Product Database
 # set catalog
 config['catalog'] = 'solacc_uc'
-#_ = spark.sql(f"CREATE CATALOG IF NOT EXISTS {config['catalog']}")
+_ = spark.sql(f"CREATE CATALOG IF NOT EXISTS {config['catalog']}")
 _ = spark.sql(f"USE CATALOG {config['catalog']}")
 
-# set database
-config['database'] = 'llm_recommender'
-_ = spark.sql(f"CREATE DATABASE IF NOT EXISTS {config['database']}")
-_ = spark.sql(f"USE DATABASE {config['database']}")
+# set schema
+config['schema'] = 'llm_recommender'
+_ = spark.sql(f"CREATE SCHEMA IF NOT EXISTS {config['schema']}")
+_ = spark.sql(f"USE SCHEMA {config['schema']}")
 
 # COMMAND ----------
 
-# DBTITLE 1,Index
-config['vs catalog'] = 'vs_catalog'
-config['vs schema'] = 'vs_schema'
-config['vs index'] = 'deleteme_index'
+# DBTITLE 1,Vector Search Index
+config['vs index'] = 'product_index'
 
 # COMMAND ----------
 

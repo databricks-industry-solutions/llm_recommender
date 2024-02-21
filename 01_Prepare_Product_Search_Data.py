@@ -1,17 +1,18 @@
 # Databricks notebook source
-# MAGIC %md The purpose of this notebook is to prepare the data used to connect LLM-based product recommendations with our product catalog.  This notebook was developed on a Databricks ML 14.0 cluster.
+# MAGIC %md The purpose of this notebook is to prepare the data associated with the products we will suggest to users.  This notebook was developed on a Databricks ML 14.2 cluster.
 
 # COMMAND ----------
 
 # MAGIC %md ##Introduction
 # MAGIC
-# MAGIC In the last notebook, we setup a connection to an LLM and designed a prompt capable of returning a set of suggested products.  In doing this, the LLM took advantage of a general knowledge of item associations but had no awareness of specific products in our product catalog.  In this notebook, we will use descriptive information about the actual products we intend to present to the user to create a searchable set of embeddings. In a later notebook, we will take the general product suggestions from the LLM and intersect them with these embeddings to identify those items in our catalog best aligned with the LLM's suggestions.
+# MAGIC In this notebook, we will use descriptive information about products we intend to present to the user to create a searchable set of embeddings. These embeddings will be used to enable a fast and flexible search of our products.
+# MAGIC
+# MAGIC To perform this work, we must load the data about our products to a database table.  We must then configure a model with which we will convert descriptive information about those products into embeddings. We will then trigger an ongoing workflow that will keep our searchable embeddings, *i.e.* our vector search index, in sync with the table. 
 
 # COMMAND ----------
 
 # DBTITLE 1,Install Required Libraries
-# MAGIC %pip install databricks-vectorsearch-preview
-# MAGIC
+# MAGIC %pip install databricks-vectorsearch
 # MAGIC dbutils.library.restartPython()
 
 # COMMAND ----------
@@ -44,7 +45,7 @@ import time
 
 # MAGIC %md ##Step 1: Load the Dataset
 # MAGIC
-# MAGIC The dataset we will be using is the [Red Dot Design Award dataset](https://huggingface.co/datasets/xiyuez/red-dot-design-award-product-description), available through HuggingFace. This dataset contains information on award winning products including descriptive text that we can use for searches:
+# MAGIC The dataset we will be using is the [Red Dot Design Award dataset](https://huggingface.co/datasets/xiyuez/red-dot-design-award-product-description), available through HuggingFace. This dataset contains information on award winning products including descriptive text that we can use for searches.  We will treat this as if this were our set of actual products available to sell to customers:
 
 # COMMAND ----------
 
@@ -58,14 +59,23 @@ print(ds)
 
 # MAGIC %md HuggingFace makes this dataset available as a dictionary dataset.  We'll persist it as a Delta Lake table as this is more typically how users of Databricks would access product information from within the lakehouse.  
 # MAGIC
-# MAGIC Please note that we are defining the target table for this data in advance so that we can add an [identity field](https://www.databricks.com/blog/2022/08/08/identity-columns-to-generate-surrogate-keys-are-now-available-in-a-lakehouse-near-you.html) to it.  Creating an id field this way would simplify the process of appending identity values to new records as they are added to the table:
+# MAGIC Please note that we are defining the target table for this data in advance so that we can add an [identity field](https://www.databricks.com/blog/2022/08/08/identity-columns-to-generate-surrogate-keys-are-now-available-in-a-lakehouse-near-you.html) to it.  Creating an id field this way simplifies the creation of unique identifiers for each item in our dataset:
 
 # COMMAND ----------
 
 # DBTITLE 1,Persist as Delta Lake Table
+# drop any pre-existing indexes on table
+vs_client = VectorSearchClient()
+try:
+  vs_client.delete_index(f"{config['catalog']}.{config['schema']}.{config['vs index']}")
+except:
+  print('Ignoring error message associated with vs index deletion ...')
+  pass
+
+
 # create table to hold product info
 _ = spark.sql('''
-  CREATE TABLE IF NOT EXISTS products (
+  CREATE OR REPLACE TABLE products (
     id bigint GENERATED ALWAYS AS IDENTITY,
     product string,
     category string,
@@ -73,9 +83,6 @@ _ = spark.sql('''
     text string
     )'''
   )
-
-# make sure table is empty
-_ = spark.sql("TRUNCATE TABLE products")
 
 # add product info to table
 _  = (
@@ -337,57 +344,57 @@ _ = spark.sql("ALTER TABLE products SET TBLPROPERTIES (delta.enableChangeDataFee
 
 # COMMAND ----------
 
-# MAGIC %md We can now configure a job to convert data into embeddings on an ongoing basis. At the time of development, the vector store and indexing features shown here were in public preview so that these may change as the product moves into general availability.
-# MAGIC
-# MAGIC Our first step in setting up the vector store index is to create a catalog to house it. Currently, there is only one such catalog per workspace permitted:
-# MAGIC
-# MAGIC **NOTE** The Try..Except logic catches the error should the catalog already exist.  The vector store client will still print an error message even though the exception has been supressed.
+# MAGIC %md We can now configure a job to convert data into embeddings on an ongoing basis. This is done by creating a referencable endpoint for the vector store and and index associated with it:
 
 # COMMAND ----------
 
-# DBTITLE 1,Create Vector Store Catalog
-# instantiate vector store client
+# DBTITLE 1,Instantiate Vector Search Client
 vs_client = VectorSearchClient()
 
-# create catalog to house vector store index
+# COMMAND ----------
+
+# DBTITLE 1,Create Vector Search Endpoint
+#name used for vector search endpoint
+endpoint_name = 'vs_'+config['embedding_model_name']
+
+# check if exists
+endpoint_exists = True
 try:
-  vs_client.create_catalog(config['vs catalog'])
+    vs_client.get_endpoint(endpoint_name)
 except:
-  print('Ignoring error message ...')
-  pass
+    pass
+    endpoint_exists = False
 
-# the line below allows all users to use the index catalog.
-_ = spark.sql(f"ALTER CATALOG {config['vs catalog']} SET OWNER TO `account users`")
-
-# COMMAND ----------
-
-# MAGIC %md We then define an index against a table:
-# MAGIC
-# MAGIC **NOTE** The Try..Except logic catches the error should the index not already exist.  The vector store client will still print an error message even though the exception has been supressed.
+# create vs endpoint
+if not endpoint_exists:
+    vs_client.create_endpoint(
+        name=endpoint_name,
+        endpoint_type="STANDARD" # or PERFORMANCE_OPTIMIZED, STORAGE_OPTIMIZED
+    )
 
 # COMMAND ----------
 
-# DBTITLE 1,Create Vector Store Index
-#name used to reference the model serving endpoint
-endpoint_name = config['embedding_model_name']
-
+# DBTITLE 1,Create Vector Search Index
 # check if index exists
 index_exists = False
 try:
-  vs_client.get_index(f"{config['vs catalog']}.{config['vs schema']}.{config['vs index']}")
+  vs_client.get_index(index_name=f"{config['catalog']}.{config['schema']}.{config['vs index']}", endpoint_name=endpoint_name)
   index_exists = True
 except:
   print('Ignoring error message ...')
   pass
 
+
 if not index_exists:
   # connect delta lake table to vector store index table
-  vs_client.create_index(
-    source_table_name=f"{config['catalog']}.{config['database']}.products",
-    dest_index_name=f"{config['vs catalog']}.{config['vs schema']}.{config['vs index']}",
+  vs_client.create_delta_sync_index(
+    endpoint_name=endpoint_name,
+    source_table_name=f"{config['catalog']}.{config['schema']}.products",
     primary_key="id", # primary identifier in source table
-    index_column="text", # field to index in source table
-    embedding_model_endpoint_name = endpoint_name # model serving endpoint to use to create the embeddings
+    embedding_source_column="text", # field to index in source table
+    index_name=f"{config['catalog']}.{config['schema']}.{config['vs index']}",
+    pipeline_type='TRIGGERED',
+    embedding_model_endpoint_name = config['embedding_model_name'] # model serving endpoint to use to create the embeddings
     )
 
 # COMMAND ----------
@@ -401,43 +408,27 @@ timeout_seconds = 120 * 60  # minutes * seconds/minute
 stop_time = time.time() + timeout_seconds
 waiting = True
 
+# get index
+idx = vs_client.get_index(index_name=f"{config['catalog']}.{config['schema']}.{config['vs index']}", endpoint_name=endpoint_name)
+
 # wait for index to complex indexing
 while time.time() <= stop_time:
 
   # get state of index
-  i = 0
-  max_attempts = 3
-  while i < max_attempts: # make three attempts to get index (sometimes the service timesout)
-    try:
-      idx = vs_client.get_index(f"{config['vs catalog']}.{config['vs schema']}.{config['vs index']}")
-      break
-    except:
-      i += 1
-      if i < max_attempts:
-        pass
-        time.sleep(5)
+  is_ready = idx.describe()['status']['ready']
 
-
-  state = idx['index_status']['status'] # get state of index
-  print(state)
-
-  # if status is provisioning
-  if state in ['PROVISIONING_PIPELINE_RESOURCES','PROVISIONING_INITIAL_SNAPSHOT']:
-    #print('provisioning ...')
-    time.sleep(60)
-  else:
+  # if not ready, wait ...
+  if is_ready:
+    print('Ready')
     waiting = False
-    #print('provisioning completed')
     break
-
+  else:
+    print('Waiting...')
+    time.sleep(60)
+   
+# if exited loop because of time out, raise error
 if waiting:
   raise Exception(f'Timeout expired waiting for index to be provisioned.  Consider elevating the timeout setting.')
-elif state != 'ONLINE_CONTINUOUS_UPDATE':
-  raise Exception(f'Provisioning failed with a status of {state}.')
-
-# COMMAND ----------
-
-vs_client.get_index({config['vs catalog']}.{config['vs schema']}.{config['vs index']})
 
 # COMMAND ----------
 
@@ -448,16 +439,30 @@ vs_client.get_index({config['vs catalog']}.{config['vs schema']}.{config['vs ind
 # COMMAND ----------
 
 # DBTITLE 1,Locate Relevant Content in Vector Store Index
-# instantiate vector store client
-vs_client = VectorSearchClient()
+# connect to index
+idx = vs_client.get_index(index_name=f"{config['catalog']}.{config['schema']}.{config['vs index']}", endpoint_name=endpoint_name)
 
 # search the vector store for related items
-vs_client.similarity_search(
-  index_name = f"{config['vs catalog']}.{config['vs schema']}.{config['vs index']}",
+idx.similarity_search(
   query_text = "winter boots",
   columns = ["id", "text"], # columns to return
   num_results = 5
   )
+
+# COMMAND ----------
+
+# MAGIC %md You'll notice the basic search results include a lot of metadata.  If you want to get just the retrieved items, this info is found under the `results` and `data array` keys:
+
+# COMMAND ----------
+
+# DBTITLE 1,Get Just the Results
+search_results = idx.similarity_search(
+  query_text = "winter boots",
+  columns = ["id", "text"], # columns to return
+  num_results = 5
+  )
+
+print(search_results['result']['data_array'])
 
 # COMMAND ----------
 
