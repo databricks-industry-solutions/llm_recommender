@@ -69,16 +69,16 @@ job_json = {
         },
         "tasks": [
             {
-                "job_cluster_key": "llm_recommender",
+                "job_cluster_key": "llm_recommender_test",
                 "notebook_task": {
                     "notebook_path": f"00_Intro_and_Config"
                 },
                 "task_key": "00"
             },
             {
-                 "job_cluster_key": "llm_recommender",
+                 "job_cluster_key": "llm_recommender_test",
                  "notebook_task": {
-                     "notebook_path": f"01_Prepare_Data"
+                     "notebook_path": f"01_Prepare_Product_Search_Data"
                  },
                  "task_key": "01",
                  "depends_on": [
@@ -88,9 +88,9 @@ job_json = {
                  ]
              },
             {
-                 "job_cluster_key": "llm_recommender",
+                 "job_cluster_key": "llm_recommender_test",
                  "notebook_task": {
-                     "notebook_path": f"02_Define_Recommender"
+                     "notebook_path": f"02_Create_General_Recommendations"
                  },
                  "task_key": "02",
                  "depends_on": [
@@ -99,18 +99,30 @@ job_json = {
                      }
                  ]
              },
+            {
+                 "job_cluster_key": "llm_recommender_test",
+                 "notebook_task": {
+                     "notebook_path": f"03_Assemble_Recommender"
+                 },
+                 "task_key": "03",
+                 "depends_on": [
+                     {
+                         "task_key": "02"
+                     }
+                 ]
+             },
         ],
         "job_clusters": [
             {
-                "job_cluster_key": "llm_recommender",
+                "job_cluster_key": "llm_recommender_test",
                 "new_cluster": {
-                    "spark_version": "14.0.x-cpu-ml-scala2.12",
+                    "spark_version": "14.2.x-cpu-ml-scala2.12",
                     "single_user_name": dbutils.notebook.entry_point.getDbutils().notebook().getContext().userName().get(),
                     "data_security_mode": "SINGLE_USER",
                 "spark_conf": {
                     "spark.databricks.delta.formatCheck.enabled": "false"
                     },
-                    "num_workers": 2,
+                    "num_workers": 1,
                     "node_type_id": {"AWS": "i3.xlarge", "MSA": "Standard_DS3_v2", "GCP": "n1-highmem-4"},
                     "custom_tags": {
                         "usage": "solacc_testing"
